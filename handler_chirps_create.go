@@ -2,26 +2,62 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 )
 
 type Chirp struct {
-	Body string `json:"body"`
+	Body string `json:"cleaned_body"`
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	var chirp Chirp
-	if err := json.NewDecoder(r.Body).Decode(&chirp); err != nil {
-		http.Error(w, `{"error": "Something went wrong"}`, http.StatusInternalServerError)
+func (cfg *apiConfig) handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
 		return
 	}
 
-	if len(chirp.Body) > 280 {
-		http.Error(w, `{"error": "Chirp is too long"}`, http.StatusBadRequest)
+	cleaned, err := validateChirp(params.Body)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error(), err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"valid": true}`))
+	respondWithJSON(w, http.StatusOK, Chirp{
+		Body: cleaned,
+	})
+}
+
+func validateChirp(body string) (string, error) {
+	const maxChirpLength = 140
+	if len(body) > maxChirpLength {
+		return "", errors.New("chirp is too long")
+	}
+
+	badWords := map[string]struct{}{
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
+	}
+	cleaned := getCleanedBody(body, badWords)
+	return cleaned, nil
+}
+
+func getCleanedBody(body string, badWords map[string]struct{}) string {
+	words := strings.Split(body, " ")
+	for i, word := range words {
+		loweredWord := strings.ToLower(word)
+		if _, ok := badWords[loweredWord]; ok {
+			words[i] = "****"
+		}
+	}
+	cleaned := strings.Join(words, " ")
+	return cleaned
 }
